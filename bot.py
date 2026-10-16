@@ -230,7 +230,7 @@ DEMO_OPTIONS={
     'finance':[('💰 Saldo (teste)','balance'),('🎁 Bônus','bonus'),('💳 Limites','limits'),('🎟 Cupons','coupon')],
     'ranking':[('📦 Produtos mais vendidos','ranking_products'),('👥 Melhores clientes','ranking_users')],
     'admins':[('➕ Adicionar administrador (teste)','add_admin'),('➖ Remover administrador (teste)','remove_admin')],
-    'settings':[('🏪 Nome da loja','name'),('👋 Boas-vindas','welcome'),('🚧 Manutenção','maintenance'),('🔗 Links','link'),('📨 Lembretes','reminders')],
+    'settings':[('🏪 Nome da loja','name'),('👋 Boas-vindas','welcome'),('🚧 Manutenção','maintenance'),('🔗 Links','link'),('📨 Lembretes','reminders'),('🏦 Meios de pagamento','payment_methods')],
 }
 DEMO_INPUTS={'create':'Produto | 19,90 | 5','rename':'Novo nome do último produto cadastrado','stock':'Quantidade a adicionar ao último produto','ban':'ID fictício do usuário','unban':'ID fictício do usuário','add_admin':'ID fictício do administrador','remove_admin':'ID fictício do administrador','limits':'Mínimo | Máximo (ex.: 10 | 500)','coupon':'Cupom de teste','name':'Novo nome da loja','welcome':'Texto de boas-vindas','link':'https://exemplo.com'}
 
@@ -240,81 +240,49 @@ def demo_state(ctx):
 def demo_menu_for(category):
     return keyboard([[(name,'demo:op:'+code)] for name,code in DEMO_OPTIONS[category]]+[[('⬅️ Painel de testes','demo:panel')]])
 
+DEMO_ADMIN_FEATURES = {
+    'create':'Cadastrar produtos com nome, preço, descrição e fotos.',
+    'list':'Consultar produtos e suas quantidades no estoque.',
+    'rename':'Editar nome, descrição e disponibilidade dos produtos.',
+    'stock':'Adicionar unidades para entrega automática.',
+    'clear':'Limpar estoque disponível com confirmação.',
+    'photos':'Enviar e alterar fotos do catálogo.',
+    'ban':'Bloquear acesso de usuários.',
+    'unban':'Remover bloqueios de usuários.',
+    'users':'Consultar e administrar usuários com acesso autorizado.',
+    'balance':'Gerenciar saldos com histórico e controles.',
+    'bonus':'Configurar bônus e recompensas.',
+    'limits':'Definir limites de recarga.',
+    'coupon':'Criar e gerenciar cupons de desconto.',
+    'ranking_products':'Consultar estatísticas de produtos mais vendidos.',
+    'ranking_users':'Consultar rankings de compras da loja.',
+    'add_admin':'Adicionar membros autorizados ao painel.',
+    'remove_admin':'Revogar acesso administrativo.',
+    'name':'Personalizar o nome público da loja.',
+    'welcome':'Editar mensagem e imagem de boas-vindas.',
+    'maintenance':'Ativar ou desativar modo manutenção.',
+    'link':'Personalizar links de suporte, grupo e loja web.',
+    'reminders':'Configurar mensagens automáticas de acompanhamento.',
+    'payment_methods':'Visualizar provedores disponíveis: Mercado Pago, Asaas, Efí/Gerencianet e Pix Manual. Integrações não ativadas na demo.',
+}
+DEMO_CATEGORIES={'products':'Produtos e estoque','users':'Usuários','finance':'Saldo e bônus','ranking':'Rankings','admins':'Administradores','settings':'Configurações'}
 async def demo_admin_callback(update,ctx,action):
-    state=demo_state(ctx)
+    ctx.user_data.pop('admin_preview_input',None)
     if action=='demo:panel':
-        ctx.user_data.pop('admin_preview_input',None)
-        return await send(update,'🧪 <b>Painel admin de demonstração</b>\nEscolha uma opção para testar. Tudo é fictício e isolado para cada visitante.',demo_admin_menu())
+        return await send(update,'👀 <b>PAINEL ADMIN — SOMENTE VISUALIZAÇÃO</b>\nExplore todos os recursos sem alterar a loja.',demo_admin_menu())
     if action.startswith('demo:cat:'):
         category=action.rsplit(':',1)[-1]
-        if category not in DEMO_OPTIONS:return await send(update,'Opção indisponível.',demo_admin_menu())
+        if category not in DEMO_OPTIONS:return await send(update,'Categoria desconhecida.',demo_admin_menu())
         ctx.user_data['admin_preview_category']=category
-        return await send(update,'🧪 <b>'+html.escape(category.title())+'</b> — modo de testes\nNenhuma mudança afeta outros usuários.',demo_menu_for(category))
-    if not action.startswith('demo:op:'):return await send(update,'Opção indisponível.',demo_admin_menu())
-    op=action.rsplit(':',1)[-1]
-    category=ctx.user_data.get('admin_preview_category','products')
-    if op not in [code for rows in DEMO_OPTIONS.values() for _,code in rows]:return await send(update,'Opção indisponível.',demo_admin_menu())
-    if op in DEMO_INPUTS:
-        ctx.user_data['admin_preview_input']=op
-        return await send(update,'🧪 Digite: <b>'+html.escape(DEMO_INPUTS[op])+'</b>\nA alteração é apenas uma simulação.',demo_menu_for(category))
-    if op=='list':
-        msg='\n'.join(f"📦 {html.escape(p['name'])}: {money(p['price'])}, {p['qty']} un." for p in state['products']) or 'Nenhum produto de teste cadastrado.'
-    elif op=='clear':
-        for product in state['products']:product['qty']=0
-        msg='🧹 Estoque de teste zerado.'
-    elif op=='maintenance':
-        state['maintenance']=not state['maintenance']
-        msg='🚧 Manutenção fictícia '+('LIGADA' if state['maintenance'] else 'DESLIGADA')
-    elif op=='users':msg='👥 Usuários bloqueados fictícios: '+str(len(state['banidos']))
-    elif op=='balance':msg='💰 Créditos de teste são usados somente na área de compras da demo. Não é possível alterar contas de terceiros.'
-    elif op=='bonus':msg='🎁 Bônus de indicações: R$ 900,00 fictícios por visitante, transferíveis pelo Perfil.'
-    elif op.startswith('ranking'):msg='🏆 Ranking ilustrativo: não são divulgados dados privados de outros visitantes.'
-    elif op=='photos':msg='🖼️ O painel real aceita fotos. Esta prévia não substitui fotos da loja compartilhada.'
-    elif op=='reminders':msg='📨 Lembretes de 30 min: recurso demonstrado, sem envio de mensagens para terceiros.'
-    else:msg='🧪 Recurso de demonstração, sem operações reais.'
-    return await send(update,msg,demo_menu_for(category))
-
-async def demo_admin_input(update,ctx,value):
-    op=ctx.user_data.pop('admin_preview_input',None)
-    if not op:return False
-    state=demo_state(ctx)
-    try:
-        if op=='create':
-            name,price,qty=[p.strip() for p in value.split('|')]
-            cents=int((Decimal(price.replace(',','.'))*100).quantize(Decimal('1')))
-            qty=int(qty)
-            if not name or not 0<=cents<=100000000 or not 0<=qty<=100000 or len(name)>100:raise ValueError()
-            state['products'].append({'name':name,'price':cents,'qty':qty})
-        elif op=='rename':
-            if not state['products'] or not 1<=len(value)<=100:raise ValueError()
-            state['products'][-1]['name']=value
-        elif op=='stock':
-            qty=int(value)
-            if not state['products'] or not 0<=qty<=100000:raise ValueError()
-            state['products'][-1]['qty']+=qty
-        elif op in ('ban','unban','add_admin','remove_admin'):
-            uid=int(value)
-            if uid<=0:raise ValueError()
-            key='banidos' if op in ('ban','unban') else 'administradores'
-            if op in ('ban','add_admin') and uid not in state[key]:state[key].append(uid)
-            if op in ('unban','remove_admin') and uid in state[key]:state[key].remove(uid)
-        elif op=='limits':
-            low,high=[float(x.replace(',','.').strip()) for x in value.split('|')]
-            if not 0<low<=high<=100000:raise ValueError()
-            state['limits']=(low,high)
-        elif op in ('coupon','name','welcome'):
-            if not 1<=len(value)<=500:raise ValueError()
-            state[op]=value
-        elif op=='link':
-            if not re.fullmatch(r'https://[^\s]{1,480}',value):raise ValueError()
-            state['link']=value
-        else:raise ValueError()
-    except (ValueError,TypeError,InvalidOperation):
-        ctx.user_data['admin_preview_input']=op
-        await send(update,'⚠️ Entrada inválida. Tente novamente.',keyboard([[('⬅️ Painel','demo:panel')]]))
-        return True
-    await send(update,'✅ Alteração simulada com sucesso, apenas na sua sessão. Não muda a loja compartilhada.',demo_admin_menu())
-    return True
+        return await send(update,'👀 <b>'+html.escape(DEMO_CATEGORIES[category])+'</b>\n\nTodas as funções aqui são apenas demonstrativas.',demo_menu_for(category))
+    if action.startswith('demo:op:'):
+        operation=action.rsplit(':',1)[-1]
+        category=ctx.user_data.get('admin_preview_category','products')
+        if category not in DEMO_OPTIONS:category='products'
+        if operation not in {code for _,code in DEMO_OPTIONS[category]}:
+            return await send(update,'Opção não disponível nesta categoria.',demo_menu_for(category))
+        return await send(update,'👀 <b>Recurso administrativo</b>\n\n'+html.escape(DEMO_ADMIN_FEATURES.get(operation,'Funcionalidade administrativa.'))+'\n\n🔒 Somente visualização — não é possível modificar dados.',demo_menu_for(category))
+    return await send(update,'Opção desconhecida.',demo_admin_menu())
 
 def demo_balances(uid):
     with conn() as c:
@@ -504,9 +472,27 @@ def admin_finance_menu():
       [('🎁 Bônus de depósito','adm_bonus_topup'),('🎉 Bônus de registro','adm_bonus_register')],
       [('📐 Limites de recarga','adm_topup_limits'),('📊 Estatísticas','adm_stats')], [('↩️ Painel','adm_panel')]])
 
+PAYMENT_METHODS = {
+    'mercado_pago':'Mercado Pago',
+    'asaas':'Asaas',
+    'efi':'Efí / Gerencianet',
+    'pix_manual':'Pix Manual',
+}
+def selected_payment_method():
+    key=setting('demo_payment_provider','mercado_pago')
+    return key if key in PAYMENT_METHODS else 'mercado_pago'
+
+def payment_provider_buttons():
+    selected=selected_payment_method()
+    rows=[[(('✅ ' if key==selected else '▫️ ')+name,'adm_pay_choose:'+key)]
+           for key,name in PAYMENT_METHODS.items()]
+    rows.append([('↩️ Configurações','adm_settings_menu')])
+    return keyboard(rows)
+
 def admin_settings_menu():
     return keyboard([[('🚧 Manutenção','adm_maintenance'),('🔔 Lembretes','adm_reminders')],
       [('👥 Entrada obrigatória','adm_force_join'),('🎨 Editar menu','adm_customize')],
+      [('🏦 Meios de pagamento','adm_payments')],
       [('🖼 Imagem do catálogo','adm_catalog_image'),('🖼 Imagem inicial','adm_menu_image')],
       [('↩️ Painel','adm_panel')]])
 
@@ -858,7 +844,7 @@ async def callback(update,ctx):
     if action=="demo_admin":
         if is_admin(uid):
             return await send(update,"⚙️ <b>Painel administrativo</b>",admin_menu())
-        return await send(update,"🧪 <b>Painel administrativo de testes</b>\nExperimente os recursos com dados fictícios exclusivos da sua sessão.",demo_admin_menu())
+        return await send(update,"🧪 <b>Painel administrativo de testes</b>\nVeja os recursos do painel. Apenas o proprietário pode realizar alterações.",demo_admin_menu())
     if action.startswith('demo:'):
         return await demo_admin_callback(update,ctx,action)
     await clear_welcome_text(update,ctx)
@@ -1062,6 +1048,15 @@ async def callback(update,ctx):
     if action=='adm_products_menu':return await send(update,'📦 <b>Produtos e estoque</b>',admin_products_menu())
     if action=='adm_finance_menu':return await send(update,'💰 <b>Saldo e bônus</b>',admin_finance_menu())
     if action=='adm_settings_menu':return await send(update,'⚙️ <b>Configurações</b>',admin_settings_menu())
+    if action=='adm_payments':
+        current=PAYMENT_METHODS[selected_payment_method()]
+        return await send(update,'🏦 <b>MEIOS DE PAGAMENTO — DEMONSTRAÇÃO</b>\n\nProvedor selecionado: <b>'+html.escape(current)+'</b>\n\n⚠️ A escolha é apenas visual: nenhuma API bancária, chave Pix ou processamento de pagamentos é habilitado por esta opção.',payment_provider_buttons())
+    if action.startswith('adm_pay_choose:'):
+        if not owner_only(uid):return await send(update,'Somente o proprietário pode escolher o provedor.',admin_settings_menu())
+        gateway_key=action.split(':',1)[1]
+        if gateway_key not in PAYMENT_METHODS:return await send(update,'Provedor desconhecido.',admin_settings_menu())
+        save_setting('demo_payment_provider',gateway_key)
+        return await send(update,'✅ <b>'+html.escape(PAYMENT_METHODS[gateway_key])+'</b> selecionado apenas na configuração demonstrativa.\n\n⚠️ Pagamentos reais continuam desativados.',payment_provider_buttons())
     if action=='adm_users_menu':
         return await send(update,'👥 <b>Usuários</b>',keyboard([[('🚫 Banir usuário','adm_ban'),('✅ Desbanir','adm_unban')],[('↩️ Painel','adm_panel')]]))
     if action in ('adm_ban','adm_unban','adm_add_admin','adm_remove_admin'):
@@ -1404,9 +1399,8 @@ async def message(update,ctx):
     value=(update.message.text or "").strip()
     step=ctx.user_data.get("step")
     if not await access_guard(update,ctx):return
-    if not is_admin(uid) and ctx.user_data.get('admin_preview_input'):
-        await demo_admin_input(update,ctx,value)
-        return
+    if not is_admin(uid):
+        ctx.user_data.pop('admin_preview_input',None)
     if not step:return await send(update,"Use /start para abrir o menu.")
     if step=='coupon_code':
         pid=ctx.user_data.pop('coupon_pid',None);ctx.user_data.pop('step',None)
