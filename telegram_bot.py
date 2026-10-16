@@ -16,17 +16,22 @@ class StoreBot:
         return core.tenant(self.tenant_id)
 
     def is_owner(self,uid):
-        return self.shop()['owner_id']==uid
+        shop=self.shop()
+        return bool(shop and shop['owner_id']==uid)
 
     async def start(self,update:Update,ctx:ContextTypes.DEFAULT_TYPE):
         shop=self.shop()
-        if not shop or not shop['enabled']: return await update.effective_message.reply_text('Loja indisponível.')
+        if not shop or not shop['enabled']:
+            return await update.effective_message.reply_text('🛠️ Loja de demonstração ainda não configurada. Use /meuid para consultar seu ID do Telegram.')
         core.visit(self.tenant_id,update.effective_user.id)
         await update.effective_message.reply_text(f"🛍️ {shop['title']}\n\n{shop['welcome']}\n\nUse /produtos para ver o catálogo.")
 
+    async def meuid(self,update:Update,ctx:ContextTypes.DEFAULT_TYPE):
+        await update.effective_message.reply_text(f"🆔 Seu ID do Telegram: {update.effective_user.id}")
+
     async def catalog(self,update:Update,ctx:ContextTypes.DEFAULT_TYPE):
         shop=self.shop()
-        if not shop or not shop['enabled']: return await update.effective_message.reply_text('Loja indisponível.')
+        if not shop or not shop['enabled']: return await update.effective_message.reply_text('Loja ainda não configurada.')
         core.visit(self.tenant_id,update.effective_user.id)
         rows=core.products(self.tenant_id)
         if not rows: return await update.effective_message.reply_text('Ainda não há produtos cadastrados.')
@@ -34,7 +39,8 @@ class StoreBot:
         await update.effective_message.reply_text('📦 Produtos:\n'+'\n'.join(lines[:30])+'\n\nCompras e pagamentos ainda não estão habilitados nesta versão de testes.')
 
     async def admin(self,update:Update,ctx:ContextTypes.DEFAULT_TYPE):
-        if not self.is_owner(update.effective_user.id): return await update.effective_message.reply_text('Acesso restrito.')
+        if not self.is_owner(update.effective_user.id):
+            return await update.effective_message.reply_text('🔒 Acesso restrito. Se esta loja ainda não foi cadastrada, consulte /meuid e configure DEMO_OWNER_ID no Railway.')
         buttons=[[InlineKeyboardButton('🎨 Nome da loja',callback_data='admin:title'),InlineKeyboardButton('👋 Boas-vindas',callback_data='admin:welcome')],
                  [InlineKeyboardButton('☎️ Suporte',callback_data='admin:support'),InlineKeyboardButton('📦 Novo produto',callback_data='admin:newproduct')],
                  [InlineKeyboardButton('✏️ Editar produto',callback_data='admin:edithelp')]]
@@ -86,6 +92,7 @@ class StoreBot:
     def application(self):
         app=Application.builder().token(self.token).build()
         app.add_handler(CommandHandler('start',self.start))
+        app.add_handler(CommandHandler('meuid',self.meuid))
         app.add_handler(CommandHandler('produtos',self.catalog))
         app.add_handler(CommandHandler('admin',self.admin))
         app.add_handler(CommandHandler('editar',self.edit))
@@ -93,6 +100,26 @@ class StoreBot:
         app.add_handler(CallbackQueryHandler(self.callback,pattern=r'^admin:'))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,self.message))
         return app
+
+def bootstrap_demo(tenant_id):
+    """Provision ONLY a missing tenant from an operator-controlled env var.
+
+    Never edit/transfer an existing tenant, even when the variable changes.
+    """
+    if core.tenant(tenant_id):
+        return
+    raw=os.environ.get('DEMO_OWNER_ID','').strip()
+    if not raw:
+        log.warning('Tenant %s not configured. Use /meuid then set DEMO_OWNER_ID in Railway.',tenant_id)
+        return
+    if not raw.isdecimal() or int(raw)<=0:
+        raise SystemExit('DEMO_OWNER_ID deve ser o ID numérico positivo da conta proprietária.')
+    if tenant_id!=1:
+        raise SystemExit('Auto-provisionamento permitido apenas para a loja demo 1.')
+    created=core.add_tenant('NexoDemoStore_bot',int(raw),'Nexo Bot Store — Demo')
+    if created!=tenant_id:
+        raise SystemExit('Tenant criado com ID inesperado. Interrompendo para evitar loja trocada.')
+    log.info('Loja de demonstração provisionada para tenant %s.',tenant_id)
 
 if __name__=='__main__':
     import argparse
@@ -102,4 +129,5 @@ if __name__=='__main__':
     token=os.environ.get('TENANT_BOT_TOKEN','')
     if not token: parser.error('Configure TENANT_BOT_TOKEN no ambiente, nunca no código')
     core.initialize()
+    bootstrap_demo(args.tenant)
     StoreBot(args.tenant,token).application().run_polling(drop_pending_updates=False)
