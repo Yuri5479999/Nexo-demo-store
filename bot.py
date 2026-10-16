@@ -559,8 +559,7 @@ async def start(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
         r=c.execute("SELECT value FROM settings WHERE key='menu_image_file_id'").fetchone()
     presentation=welcome_text(update.effective_user)
     if r and r['value']:
-        # Telegram exibe mensagens separadas na ordem: texto, imagem, botões.
-        # Os botões são anexados à imagem; o texto pode ser longo (> limite de legenda).
+        # Legenda, imagem e teclado no mesmo bloco visual do Telegram.
         q=update.callback_query
         if q:
             try:
@@ -571,12 +570,26 @@ async def start(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
                 await q.message.delete()
             except TelegramError:
                 pass
+        # O limite da legenda do Telegram é de 1024 caracteres depois do parse.
+        # Se exceder, preserve o texto sem truncar nomes ou HTML.
+        caption_ok = len(html.unescape(re.sub(r'<[^>]*>', '', presentation))) <= 1024
+        if caption_ok:
+            try:
+                return await ctx.bot.send_photo(chat_id=update.effective_chat.id,
+                                                photo=r['value'], caption=presentation,
+                                                parse_mode='HTML', reply_markup=main_menu())
+            except TelegramError:
+                logging.exception('Falha ao enviar foto com legenda; utilizando mensagem de texto')
+                return await ctx.bot.send_message(chat_id=update.effective_chat.id,
+                                                  text=presentation, parse_mode='HTML',
+                                                  reply_markup=main_menu())
         intro=await ctx.bot.send_message(chat_id=update.effective_chat.id,
                                          text=presentation,parse_mode='HTML')
         ctx.user_data['welcome_text_message_id']=intro.message_id
         try:
             return await ctx.bot.send_photo(chat_id=update.effective_chat.id,
-                                            photo=r['value'],reply_markup=main_menu())
+                                            photo=r['value'],caption='🛍️ Escolha uma opção:',
+                                            reply_markup=main_menu())
         except TelegramError:
             logging.exception('Não foi possível enviar imagem do menu; mantendo botões acessíveis')
             return await ctx.bot.send_message(chat_id=update.effective_chat.id,
