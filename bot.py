@@ -35,6 +35,10 @@ def init():
         c.executescript("""
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
         CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,name TEXT,username TEXT,balance INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS demo_referral_wallet(
+            user_id INTEGER PRIMARY KEY REFERENCES users(id),
+            available_cents INTEGER NOT NULL DEFAULT 90000 CHECK(available_cents>=0),
+            transferred_cents INTEGER NOT NULL DEFAULT 0 CHECK(transferred_cents>=0));
         CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,description TEXT DEFAULT '',price INTEGER NOT NULL,active INTEGER DEFAULT 1);
         CREATE TABLE IF NOT EXISTS stock(id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER NOT NULL,content TEXT NOT NULL,sold INTEGER DEFAULT 0,FOREIGN KEY(product_id) REFERENCES products(id));
         CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,product_id INTEGER,stock_id INTEGER,price INTEGER,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -95,6 +99,20 @@ def init():
             c.execute("ALTER TABLE nexo_restock_outbox ADD COLUMN stock_current INTEGER")
         if 'photo_file_id' not in alert_cols:
             c.execute("ALTER TABLE nexo_restock_outbox ADD COLUMN photo_file_id TEXT")
+def seed_demo_products():
+    """Populate samples once, only in a fresh catalog; never overwrite entered inventory."""
+    with conn() as c:
+        already=c.execute("SELECT value FROM settings WHERE key='demo_seed_catalog_v1'").fetchone()
+        if already:return
+        if not c.execute('SELECT 1 FROM products LIMIT 1').fetchone():
+            for name,price in [('Acesso Digital Exemplo — 30 dias',990),('Plano Gamer Demo — 60 dias',1490),('Pacote Surpresa — DEMO',590)]:
+                pid=c.execute('INSERT INTO products(name,description,price) VALUES(?,?,?)',
+                              (name,'Produto fictício para testar o fluxo de compra, sem acesso real.',price)).lastrowid
+                for i in range(10):
+                    c.execute('INSERT INTO stock(product_id,content) VALUES(?,?)',
+                              (pid,'🎮 ENTREGA SIMULADA — TESTE\nEste item é fictício e não concede acesso a nenhum serviço.\nNexo Bot Store Demo.'))
+        c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('demo_seed_catalog_v1','1')")
+
 def money(cents): return f"R$ {cents/100:,.2f}".replace(",","X").replace(".",",").replace("X",".")
 def parse_amount(raw):
     try:
@@ -129,7 +147,6 @@ def consume_coupon(c,code,user_id,order_id):
 
 def purchase_buttons(pid):
     return keyboard([[('💳 Comprar com saldo',f'buy:{pid}')],
-                     [('⚡ Comprar com Pix',f'pixbuy:{pid}')],
                      [('🎟️ Aplicar cupom',f'coupon_apply:{pid}')],
                      [('↩️ Voltar','products')]])
 
@@ -163,10 +180,14 @@ GROUP_URL=""
 WEB_URL=""
 
 MENU_BUTTONS = [
-    ('products','📦 PRODUTOS'), ('public_stock','📊 ESTOQUE'),
-    ('topup','💳 ADICIONAR SALDO'), ('balance','💰 MEU SALDO'),
-    ('history','📜 HISTÓRICO'), ('account','👤 MINHA CONTA'),
-    ('support','📞 SUPORTE'), ('group','👥 GRUPO'), ('web','🌐 LOJA WEB'),
+    ('products','🎟️ LOGINS | CONTAS PREMIUM'),
+    ('web','🌐 LOJA WEB'),
+    ('account','👤 PERFIL'),
+    ('topup','💰 ADICIONAR SALDO'),
+    ('history','📜 HISTÓRICO'),
+    ('support','🧑🏻‍💻 SUPORTE'),
+    ('rent','📍 ALUGAR BOT'),
+    ('public_stock','📊 ESTOQUE'),
 ]
 
 def setting(key, default=None):
@@ -182,32 +203,44 @@ def menu_label(key):
     return setting('menu_button_'+key,dict(MENU_BUTTONS)[key])
 
 def main_menu():
-    rows=[
+    return M([
         [B(menu_label('products'),callback_data='products')],
-        [B(menu_label('public_stock'),callback_data='public_stock'),B(menu_label('topup'),callback_data='topup')],
-        [B(menu_label('balance'),callback_data='balance'),B(menu_label('history'),callback_data='history')],
-        [B(menu_label('account'),callback_data='account')],
-    ]
-    optional=[]
-    for key,default in [('support',SUPPORT_URL),('group',GROUP_URL),('web',WEB_URL)]:
-        url=setting('menu_url_'+key,default)
-        if url and re.fullmatch(r'https://[^\s]+',url):
-            optional.append(B(menu_label(key),url=url))
-    if optional: rows.append(optional[:2])
-    if len(optional)>2: rows.append(optional[2:])
-    return M(rows)
+        [B(menu_label('web'),callback_data='web')],
+        [B(menu_label('account'),callback_data='account'),B(menu_label('topup'),callback_data='topup')],
+        [B(menu_label('history'),callback_data='history')],
+        [B(menu_label('support'),callback_data='support'),B(menu_label('rent'),callback_data='rent')],
+        [B(menu_label('public_stock'),callback_data='public_stock')],
+    ])
+
+
+def demo_balances(uid):
+    with conn() as c:
+        row=c.execute("SELECT u.balance, d.available_cents FROM users u LEFT JOIN demo_referral_wallet d ON d.user_id=u.id WHERE u.id=?",(uid,)).fetchone()
+    return (row['balance'] if row else 0, row['available_cents'] if row and row['available_cents'] is not None else 0)
+
+def demo_profile_buttons():
+    return keyboard([[('📜 BAIXAR HISTÓRICO','history')],
+                     [('🪙 TROCAR BÔNUS POR SALDO','referral_convert')],
+                     [('🏠 VOLTAR','home')]])
+
+def demo_profile_text(user):
+    balance, bonus=demo_balances(user.id)
+    return (f"👤 <b>PERFIL — DEMONSTRAÇÃO</b>\n\n"
+            f"🆔 ID: <code>{user.id}</code>\n"
+            f"💰 Saldo de compras: <b>{money(balance)}</b>\n"
+            f"🏅 Bônus de indicações: <b>{money(bonus)}</b>\n\n"
+            "🎮 Esses saldos são fictícios, sem valor em dinheiro. "
+            "Toque em <b>TROCAR BÔNUS POR SALDO</b> para testar as compras.")
 
 def welcome_text(user):
-    with conn() as c:
-        row=c.execute('SELECT balance FROM users WHERE id=?',(user.id,)).fetchone()
-    balance=row['balance'] if row else 0
-    username='@'+html.escape(user.username) if user.username else 'Não informado'
-    intro=html.escape(setting('store_name','Minha Loja Demo'))+'\n\n'+html.escape(setting('menu_welcome_text','💜 Bem-vindo à sua loja demonstrativa!\n🛍️ Personalize tudo pelo painel /admin.\n⚠️ Pagamentos reais desativados.'))
-    return (intro+'\n\n👤 <b>Minha conta</b>\n'
-            f'📛 <b>Nome:</b> {html.escape(user.full_name)}\n'
-            f'👤 <b>Usuário:</b> {username}\n'
+    balance,bonus=demo_balances(user.id)
+    intro=html.escape(setting('store_name','NEXO BOT STORE — DEMO'))+'\n\n'+html.escape(
+        setting('menu_welcome_text','💜 Bem-vindo à loja demonstrativa!\n🛍️ Escolha um serviço e teste uma compra.\n⚠️ Apenas créditos fictícios; não envie dinheiro.'))
+    return (intro+'\n\n👤 <b>Seus dados:</b>\n'
             f'🆔 <b>ID:</b> <code>{user.id}</code>\n'
-            f'💰 <b>Saldo:</b> {money(balance)}')
+            f'💰 <b>Saldo atual:</b> {money(balance)}\n'
+            f'🏅 <b>Bônus de indicações:</b> {money(bonus)}\n\n'
+            '💜 <b>DEMONSTRAÇÃO — NÃO ENVIE PAGAMENTOS</b>')
 
 def catalog_buttons(rows):
     buttons=[[(f"{r['name'][:34]} • {money(r['price'])} • {r['qty']} un.",f"product:{r['id']}")] for r in rows]
@@ -457,6 +490,7 @@ def user_save(u):
         c.execute('BEGIN IMMEDIATE')
         existing=c.execute('SELECT id FROM users WHERE id=?',(u.id,)).fetchone()
         c.execute("INSERT INTO users(id,name,username) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,username=excluded.username",(u.id,u.full_name,u.username or ""))
+        c.execute("INSERT OR IGNORE INTO demo_referral_wallet(user_id,available_cents) VALUES(?,90000)",(u.id,))
         if not existing and u.id not in ROOT_ADMINS and not is_banned_registration(c,u.id):
             bonus=setting_int_registration(c,'bonus_register_cents',0)
             if bonus>0:
@@ -577,7 +611,8 @@ async def start(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
             try:
                 return await ctx.bot.send_photo(chat_id=update.effective_chat.id,
                                                 photo=r['value'], caption=presentation,
-                                                parse_mode='HTML', reply_markup=main_menu())
+                                                parse_mode='HTML', reply_markup=main_menu(),
+                                                show_caption_above_media=True)
             except TelegramError:
                 logging.exception('Falha ao enviar foto com legenda; utilizando mensagem de texto')
                 return await ctx.bot.send_message(chat_id=update.effective_chat.id,
@@ -601,8 +636,8 @@ async def pix_command(update,ctx):
     """Atalho /pix: abre o mesmo fluxo seguro de recarga já usado no menu."""
     user_save(update.effective_user)
     if not await access_guard(update,ctx):return
-    ctx.user_data['step']='pix_topup_amount'
-    await send(update,'💳 Digite o valor da recarga em reais (exemplo: 25,00). O Pix será confirmado automaticamente.')
+    ctx.user_data.pop('step',None)
+    await send(update,'🎮 Demonstração: pagamentos Pix desativados. Use 👤 PERFIL para converter os R$ 900 de bônus fictícios em saldo de testes.',keyboard([[('👤 PERFIL','account')]]))
 
 async def admin(update,ctx):
     user_save(update.effective_user)
@@ -738,6 +773,16 @@ async def callback(update,ctx):
             logging.exception("Erro ao gerar ou enviar backup")
             return await send(update,"⚠️ Não foi possível criar o backup. Confira os logs do Railway.",admin_menu())
         return await send(update,"✅ Backup enviado no seu privado! Salve o arquivo fora do Telegram, em um local seguro.",admin_menu())
+    if action=="web":
+        url=setting('menu_url_web','').strip()
+        if url and re.fullmatch(r'https://[^\s]+',url):
+            return await send(update,'🌐 <b>LOJA WEB</b>\n\nAcesse a loja pelo botão abaixo:',
+                M([[B('🌐 ABRIR LOJA WEB',url=url)],
+                   [B('🏠 VOLTAR',callback_data='home')]]))
+        return await send(update,
+            '🌐 <b>LOJA WEB</b>\n\nO link da loja ainda não foi configurado. '
+            'O proprietário pode cadastrar no /admin → Personalizar → Links → Loja Web.',
+            keyboard([[('🏠 VOLTAR','home')]]))
     if action=="public_stock":
         with conn() as c:
             rows=c.execute("SELECT p.name, COUNT(s.id) qty FROM products p LEFT JOIN stock s ON s.product_id=p.id AND s.sold=0 WHERE p.active=1 GROUP BY p.id ORDER BY p.id DESC LIMIT 40").fetchall()
@@ -782,10 +827,11 @@ async def callback(update,ctx):
             if not p or not qty:return await send(update,'Produto sem estoque.')
             try: price,_=coupon_price(c,code,p['price'])
             except ValueError as exc:return await send(update,html.escape(str(exc)),purchase_buttons(pid))
-        if method=='pix':return await generate_pix(update,ctx,uid,'product',pid,price,coupon=code,original_price=p['price'])
+        if method=='pix':return await send(update,'⚠️ Pix indisponível na demo.')
         if method=='saldo':return await buy_with_balance(update,ctx,pid,code)
         return await send(update,'Opção inválida.')
     if action.startswith("pixbuy:"):
+        return await send(update,'⚠️ Pix indisponível: esta é uma demonstração sem cobranças reais.',keyboard([[('👤 PERFIL','account')],[('🏠 VOLTAR','home')]]))
         pid=int(action.split(":")[1])
         with conn() as c:
             p=c.execute("SELECT p.*, (SELECT COUNT(*) FROM stock s WHERE s.product_id=p.id AND s.sold=0) qty FROM products p WHERE p.id=? AND p.active=1",(pid,)).fetchone()
@@ -806,10 +852,51 @@ async def callback(update,ctx):
         return await send(update,text,after_purchase_buttons(r["product_id"]) if r["status"]=="approved" and r["kind"]=="product" and r["product_id"] else main_menu())
     if action.startswith("buy:"):
         return await buy_with_balance(update,ctx,int(action.split(':')[1]))
+    if action=='mystery':
+        with conn() as c:
+            rows=c.execute("SELECT id,name FROM products WHERE active=1 AND (LOWER(name) LIKE '%surpresa%' OR LOWER(name) LIKE '%misteriosa%') ORDER BY id").fetchall()
+        if not rows:return await send(update,'🎁 Caixa misteriosa de teste ainda não configurada.',keyboard([[('🏠 VOLTAR','home')]]))
+        return await send(update,'🎁 <b>CAIXA MISTERIOSA — DEMO</b>\nEscolha um produto de teste:',
+                          keyboard([[(r['name'][:45],f"product:{r['id']}")] for r in rows]+[[('🏠 VOLTAR','home')]]))
+    if action=='account':
+        return await send(update,demo_profile_text(q.from_user),demo_profile_buttons())
+    if action=='referral_convert':
+        balance,bonus=demo_balances(uid)
+        if not bonus:return await send(update,'🪙 Você já transferiu todos os bônus fictícios para o saldo de compras.',demo_profile_buttons())
+        return await send(update,f'🪙 <b>Trocar bônus por saldo</b>\n\nDisponível: {money(bonus)}\n\nDeseja transferir tudo para seu saldo de compras?',
+                          keyboard([[('✅ TRANSFERIR BÔNUS', 'referral_confirm')],[('❌ CANCELAR','account')]]))
+    if action=='referral_confirm':
+        with conn() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row=c.execute('SELECT available_cents FROM demo_referral_wallet WHERE user_id=?',(uid,)).fetchone()
+            amount=row['available_cents'] if row else 0
+            if amount>0:
+                c.execute('UPDATE demo_referral_wallet SET available_cents=0,transferred_cents=transferred_cents+? WHERE user_id=? AND available_cents=?',(amount,uid,amount))
+                c.execute('UPDATE users SET balance=balance+? WHERE id=?',(amount,uid))
+        if not amount:return await send(update,'Esse bônus já foi transferido.',demo_profile_buttons())
+        return await send(update,f'✅ <b>Transferência de teste concluída!</b>\n\n🪙 Bônus convertido: {money(amount)}\n💰 Saldo disponível: {money(demo_balances(uid)[0])}\n\n⚠️ Sem valor em dinheiro. Agora teste um produto!',
+                          keyboard([[('🎟️ VER SERVIÇOS','products')],[('👤 PERFIL','account')]]))
+    if action=='ranking':
+        with conn() as c:
+            top=c.execute('SELECT p.name,COUNT(*) n FROM orders o JOIN products p ON p.id=o.product_id GROUP BY p.id ORDER BY n DESC,p.name LIMIT 10').fetchall()
+            buyers=c.execute('SELECT u.name,COUNT(*) n FROM orders o JOIN users u ON u.id=o.user_id GROUP BY o.user_id ORDER BY n DESC LIMIT 10').fetchall()
+        parts=['🏆 <b>RANKING — COMPRAS DE TESTE</b>','\n✅ <b>SERVIÇOS</b>']
+        parts += [f"{i}. {html.escape(r['name'])} — {r['n']}" for i,r in enumerate(top,1)] or ['Ainda sem compras']
+        parts.append('\n✅ <b>COMPRADORES</b>')
+        parts += [f"{i}. {html.escape(r['name'] or 'Cliente')} — {r['n']}" for i,r in enumerate(buyers,1)] or ['Ainda sem compras']
+        return await send(update,'\n'.join(parts),keyboard([[('🏠 VOLTAR','home')]]))
+    if action=='search':
+        ctx.user_data['step']='demo_search'
+        return await send(update,'🔎 <b>PESQUISAR SERVIÇO</b>\n\nDigite o nome ou uma parte do nome do produto:',keyboard([[('❌ CANCELAR','home')]]))
+    if action in ('support','rent'):
+        key='menu_url_support' if action=='support' else 'menu_url_rent'
+        url=setting(key,'')
+        if url and re.fullmatch(r'https://[^\s]+',url):
+            return await send(update,('🧑🏻‍💻 SUPORTE' if action=='support' else '📍 ALUGAR BOT')+'\n\n'+html.escape(url),keyboard([[('🏠 VOLTAR','home')]]))
+        return await send(update,'💜 Esta opção ainda não tem um link configurado na demonstração.',keyboard([[('🏠 VOLTAR','home')]]))
     if action=="balance":
         with conn() as c:r=c.execute("SELECT balance FROM users WHERE id=?",(uid,)).fetchone()
-        return await send(update,f"💰 Seu saldo: <b>{money(r['balance'])}</b>",main_menu())
-    if action=="account":return await send(update,f"👤 <b>Minha conta</b>\nNome: {html.escape(q.from_user.full_name)}\nUsuário: @{html.escape(q.from_user.username or 'sem_usuario')}\nID: <code>{uid}</code>",main_menu())
+        return await send(update,f"💰 Saldo fictício: <b>{money(r['balance'])}</b>",keyboard([[('👤 PERFIL','account')],[('🏠 VOLTAR','home')]]))
     if action=="history":
         with conn() as c:rows=c.execute("SELECT o.id,p.name,o.price,o.created_at FROM orders o JOIN products p ON p.id=o.product_id WHERE o.user_id=? ORDER BY o.id DESC LIMIT 15",(uid,)).fetchall()
         return await send(update,"📦 <b>Últimas compras</b>\n"+("\n".join(f"#{r['id']} • {html.escape(r['name'])} • {money(r['price'])} • {r['created_at']}" for r in rows) if rows else "Nenhuma compra ainda."),main_menu())
@@ -820,7 +907,8 @@ async def callback(update,ctx):
     if action=="topup":
         ctx.user_data.pop("step",None)
         ctx.user_data["step"]="pix_topup_amount"
-        return await send(update,"⚠️ Ambiente demonstrativo: pagamentos reais desativados. Não envie dinheiro.")
+        ctx.user_data.pop('step',None)
+        return await send(update,"💰 <b>ADICIONAR SALDO — DEMO</b>\n\nNão há Pix nesta demonstração.\n🎁 Abra o PERFIL e toque em <b>TROCAR BÔNUS POR SALDO</b> para converter seus R$ 900 fictícios.",keyboard([[('👤 PERFIL','account')],[('🏠 VOLTAR','home')]]))
     if not is_admin(uid):return await send(update,"Acesso restrito.")
     if action=='adm_products_menu':return await send(update,'📦 <b>Produtos e estoque</b>',admin_products_menu())
     if action=='adm_finance_menu':return await send(update,'💰 <b>Saldo e bônus</b>',admin_finance_menu())
@@ -1180,9 +1268,10 @@ async def message(update,ctx):
             except ValueError as exc:return await send(update,html.escape(str(exc)),purchase_buttons(pid))
         return await send(update,f"🎟️ <b>Cupom {code}</b>\nAntes: <s>{money(p['price'])}</s>\nAgora: <b>{money(price)}</b>",
                           keyboard([[('💳 Pagar com saldo',f'coupon_checkout:saldo:{pid}:{code}')],
-                                    [('⚡ Pagar com Pix',f'coupon_checkout:pix:{pid}:{code}')],
                                     [('↩️ Produto',f'product:{pid}')]]))
     if step=="pix_topup_amount":
+        ctx.user_data.pop('step',None)
+        return await send(update,'⚠️ Pix desativado na demonstração. Use o bônus do perfil.')
         amount=parse_amount(value)
         if not amount:return await send(update,"Valor inválido. Exemplo: 25,00")
         if not setting_int("min_topup",100)<=amount<=setting_int("max_topup",10000000):return await send(update,"Valor fora dos limites de recarga configurados.")
@@ -1200,6 +1289,14 @@ async def message(update,ctx):
             try:await ctx.bot.send_message(aid,f"💸 Nova recarga #{rid}\nCliente: {uid}\nValor: {money(amount)}\nConfira o pagamento no banco e abra /admin.")
             except Exception:logging.exception("Falha na notificação de recarga")
         return
+    if step=='demo_search':
+        ctx.user_data.pop('step',None)
+        query=value.strip()[:80]
+        if len(query)<2:return await send(update,'Digite ao menos 2 caracteres.',keyboard([[('🏠 VOLTAR','home')]]))
+        with conn() as c:
+            rows=c.execute('SELECT id,name,price FROM products WHERE active=1 AND LOWER(name) LIKE ? ORDER BY id DESC LIMIT 20',('%'+query.lower()+'%',)).fetchall()
+        if not rows:return await send(update,'🔎 Nenhum serviço encontrado.',keyboard([[('🔎 NOVA PESQUISA','search')],[('🏠 VOLTAR','home')]]))
+        return await send(update,'🔎 <b>RESULTADOS</b>\nSelecione um serviço:',keyboard([[(f"{r['name'][:31]} — {money(r['price'])}",f"product:{r['id']}")] for r in rows]+[[('🏠 VOLTAR','home')]]))
     if not is_admin(uid):
         ctx.user_data.pop("step",None);return await send(update,"Acesso restrito.")
     if step in ('adm_ban','adm_unban','adm_add_admin','adm_remove_admin'):
@@ -1620,6 +1717,7 @@ def main():
     if not TOKEN or TOKEN=="COLE_TOKEN_DO_BOTFATHER":raise RuntimeError("Configure TENANT_BOT_TOKEN no .env")
     DB.parent.mkdir(parents=True,exist_ok=True)
     init()
+    seed_demo_products()
     app=Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start",start))
     app.add_handler(CommandHandler("admin",admin))
