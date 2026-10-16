@@ -184,7 +184,7 @@ MENU_BUTTONS = [
     ('web','🌐 LOJA WEB'),
     ('account','👤 PERFIL'),
     ('topup','💰 ADICIONAR SALDO'),
-    ('history','📜 HISTÓRICO'),
+    ('admin','⚙️ ADMIN'),
     ('support','🧑🏻‍💻 SUPORTE'),
     ('rent','📍 ALUGAR BOT'),
     ('public_stock','📊 ESTOQUE'),
@@ -202,16 +202,119 @@ def save_setting(key,value):
 def menu_label(key):
     return setting('menu_button_'+key,dict(MENU_BUTTONS)[key])
 
-def main_menu():
-    return M([
+def main_menu(user_id=None):
+    is_admin_menu_visible = True
+    rows = [
         [B(menu_label('products'),callback_data='products')],
         [B(menu_label('web'),callback_data='web')],
         [B(menu_label('account'),callback_data='account'),B(menu_label('topup'),callback_data='topup')],
-        [B(menu_label('history'),callback_data='history')],
+        [B(menu_label('admin'),callback_data='demo_admin')] if is_admin_menu_visible else [],
         [B(menu_label('support'),callback_data='support'),B(menu_label('rent'),callback_data='rent')],
         [B(menu_label('public_stock'),callback_data='public_stock')],
+    ]
+    return M([row for row in rows if row])
+
+
+# Demonstração individual do painel — não altera os dados compartilhados.
+def demo_admin_menu():
+    return keyboard([
+        [('📦 Produtos e estoque','demo:cat:products'),('👥 Usuários','demo:cat:users')],
+        [('💰 Saldo e bônus','demo:cat:finance'),('🏆 Rankings','demo:cat:ranking')],
+        [('🛡 Administradores','demo:cat:admins'),('⚙️ Configurações','demo:cat:settings')],
+        [('🏠 Início','home')],
     ])
 
+DEMO_OPTIONS={
+    'products':[('➕ Cadastrar produto','create'),('📋 Ver produtos','list'),('✏️ Editar produto','rename'),('📥 Adicionar estoque','stock'),('🧹 Limpar estoque','clear'),('🖼 Fotos','photos')],
+    'users':[('🚫 Banir (teste)','ban'),('✅ Desbanir (teste)','unban'),('👥 Usuários (teste)','users')],
+    'finance':[('💰 Saldo (teste)','balance'),('🎁 Bônus','bonus'),('💳 Limites','limits'),('🎟 Cupons','coupon')],
+    'ranking':[('📦 Produtos mais vendidos','ranking_products'),('👥 Melhores clientes','ranking_users')],
+    'admins':[('➕ Adicionar administrador (teste)','add_admin'),('➖ Remover administrador (teste)','remove_admin')],
+    'settings':[('🏪 Nome da loja','name'),('👋 Boas-vindas','welcome'),('🚧 Manutenção','maintenance'),('🔗 Links','link'),('📨 Lembretes','reminders')],
+}
+DEMO_INPUTS={'create':'Produto | 19,90 | 5','rename':'Novo nome do último produto cadastrado','stock':'Quantidade a adicionar ao último produto','ban':'ID fictício do usuário','unban':'ID fictício do usuário','add_admin':'ID fictício do administrador','remove_admin':'ID fictício do administrador','limits':'Mínimo | Máximo (ex.: 10 | 500)','coupon':'Cupom de teste','name':'Novo nome da loja','welcome':'Texto de boas-vindas','link':'https://exemplo.com'}
+
+def demo_state(ctx):
+    return ctx.user_data.setdefault('admin_preview',{'products':[],'name':'Minha loja de demonstração','welcome':'Bem-vindo!','banidos':[],'administradores':[],'maintenance':False})
+
+def demo_menu_for(category):
+    return keyboard([[(name,'demo:op:'+code)] for name,code in DEMO_OPTIONS[category]]+[[('⬅️ Painel de testes','demo:panel')]])
+
+async def demo_admin_callback(update,ctx,action):
+    state=demo_state(ctx)
+    if action=='demo:panel':
+        ctx.user_data.pop('admin_preview_input',None)
+        return await send(update,'🧪 <b>Painel admin de demonstração</b>\nEscolha uma opção para testar. Tudo é fictício e isolado para cada visitante.',demo_admin_menu())
+    if action.startswith('demo:cat:'):
+        category=action.rsplit(':',1)[-1]
+        if category not in DEMO_OPTIONS:return await send(update,'Opção indisponível.',demo_admin_menu())
+        ctx.user_data['admin_preview_category']=category
+        return await send(update,'🧪 <b>'+html.escape(category.title())+'</b> — modo de testes\nNenhuma mudança afeta outros usuários.',demo_menu_for(category))
+    if not action.startswith('demo:op:'):return await send(update,'Opção indisponível.',demo_admin_menu())
+    op=action.rsplit(':',1)[-1]
+    category=ctx.user_data.get('admin_preview_category','products')
+    if op not in [code for rows in DEMO_OPTIONS.values() for _,code in rows]:return await send(update,'Opção indisponível.',demo_admin_menu())
+    if op in DEMO_INPUTS:
+        ctx.user_data['admin_preview_input']=op
+        return await send(update,'🧪 Digite: <b>'+html.escape(DEMO_INPUTS[op])+'</b>\nA alteração é apenas uma simulação.',demo_menu_for(category))
+    if op=='list':
+        msg='\n'.join(f"📦 {html.escape(p['name'])}: {money(p['price'])}, {p['qty']} un." for p in state['products']) or 'Nenhum produto de teste cadastrado.'
+    elif op=='clear':
+        for product in state['products']:product['qty']=0
+        msg='🧹 Estoque de teste zerado.'
+    elif op=='maintenance':
+        state['maintenance']=not state['maintenance']
+        msg='🚧 Manutenção fictícia '+('LIGADA' if state['maintenance'] else 'DESLIGADA')
+    elif op=='users':msg='👥 Usuários bloqueados fictícios: '+str(len(state['banidos']))
+    elif op=='balance':msg='💰 Créditos de teste são usados somente na área de compras da demo. Não é possível alterar contas de terceiros.'
+    elif op=='bonus':msg='🎁 Bônus de indicações: R$ 900,00 fictícios por visitante, transferíveis pelo Perfil.'
+    elif op.startswith('ranking'):msg='🏆 Ranking ilustrativo: não são divulgados dados privados de outros visitantes.'
+    elif op=='photos':msg='🖼️ O painel real aceita fotos. Esta prévia não substitui fotos da loja compartilhada.'
+    elif op=='reminders':msg='📨 Lembretes de 30 min: recurso demonstrado, sem envio de mensagens para terceiros.'
+    else:msg='🧪 Recurso de demonstração, sem operações reais.'
+    return await send(update,msg,demo_menu_for(category))
+
+async def demo_admin_input(update,ctx,value):
+    op=ctx.user_data.pop('admin_preview_input',None)
+    if not op:return False
+    state=demo_state(ctx)
+    try:
+        if op=='create':
+            name,price,qty=[p.strip() for p in value.split('|')]
+            cents=int((Decimal(price.replace(',','.'))*100).quantize(Decimal('1')))
+            qty=int(qty)
+            if not name or not 0<=cents<=100000000 or not 0<=qty<=100000 or len(name)>100:raise ValueError()
+            state['products'].append({'name':name,'price':cents,'qty':qty})
+        elif op=='rename':
+            if not state['products'] or not 1<=len(value)<=100:raise ValueError()
+            state['products'][-1]['name']=value
+        elif op=='stock':
+            qty=int(value)
+            if not state['products'] or not 0<=qty<=100000:raise ValueError()
+            state['products'][-1]['qty']+=qty
+        elif op in ('ban','unban','add_admin','remove_admin'):
+            uid=int(value)
+            if uid<=0:raise ValueError()
+            key='banidos' if op in ('ban','unban') else 'administradores'
+            if op in ('ban','add_admin') and uid not in state[key]:state[key].append(uid)
+            if op in ('unban','remove_admin') and uid in state[key]:state[key].remove(uid)
+        elif op=='limits':
+            low,high=[float(x.replace(',','.').strip()) for x in value.split('|')]
+            if not 0<low<=high<=100000:raise ValueError()
+            state['limits']=(low,high)
+        elif op in ('coupon','name','welcome'):
+            if not 1<=len(value)<=500:raise ValueError()
+            state[op]=value
+        elif op=='link':
+            if not re.fullmatch(r'https://[^\s]{1,480}',value):raise ValueError()
+            state['link']=value
+        else:raise ValueError()
+    except (ValueError,TypeError,InvalidOperation):
+        ctx.user_data['admin_preview_input']=op
+        await send(update,'⚠️ Entrada inválida. Tente novamente.',keyboard([[('⬅️ Painel','demo:panel')]]))
+        return True
+    await send(update,'✅ Alteração simulada com sucesso, apenas na sua sessão. Não muda a loja compartilhada.',demo_admin_menu())
+    return True
 
 def demo_balances(uid):
     with conn() as c:
@@ -611,26 +714,26 @@ async def start(update:Update,ctx:ContextTypes.DEFAULT_TYPE):
             try:
                 return await ctx.bot.send_photo(chat_id=update.effective_chat.id,
                                                 photo=r['value'], caption=presentation,
-                                                parse_mode='HTML', reply_markup=main_menu(),
+                                                parse_mode='HTML', reply_markup=main_menu(update.effective_user.id),
                                                 show_caption_above_media=True)
             except TelegramError:
                 logging.exception('Falha ao enviar foto com legenda; utilizando mensagem de texto')
                 return await ctx.bot.send_message(chat_id=update.effective_chat.id,
                                                   text=presentation, parse_mode='HTML',
-                                                  reply_markup=main_menu())
+                                                  reply_markup=main_menu(update.effective_user.id))
         intro=await ctx.bot.send_message(chat_id=update.effective_chat.id,
                                          text=presentation,parse_mode='HTML')
         ctx.user_data['welcome_text_message_id']=intro.message_id
         try:
             return await ctx.bot.send_photo(chat_id=update.effective_chat.id,
                                             photo=r['value'],caption='🛍️ Escolha uma opção:',
-                                            reply_markup=main_menu())
+                                            reply_markup=main_menu(update.effective_user.id))
         except TelegramError:
             logging.exception('Não foi possível enviar imagem do menu; mantendo botões acessíveis')
             return await ctx.bot.send_message(chat_id=update.effective_chat.id,
                                               text='🛍️ Escolha uma opção abaixo:',
-                                              reply_markup=main_menu())
-    return await send(update,presentation,main_menu())
+                                              reply_markup=main_menu(update.effective_user.id))
+    return await send(update,presentation,main_menu(update.effective_user.id))
 
 async def pix_command(update,ctx):
     """Atalho /pix: abre o mesmo fluxo seguro de recarga já usado no menu."""
@@ -752,6 +855,12 @@ async def callback(update,ctx):
         return
     if not await access_guard(update,ctx):return
     if action=="home": return await start(update,ctx)
+    if action=="demo_admin":
+        if is_admin(uid):
+            return await send(update,"⚙️ <b>Painel administrativo</b>",admin_menu())
+        return await send(update,"🧪 <b>Painel administrativo de testes</b>\nExperimente os recursos com dados fictícios exclusivos da sua sessão.",demo_admin_menu())
+    if action.startswith('demo:'):
+        return await demo_admin_callback(update,ctx,action)
     await clear_welcome_text(update,ctx)
     if action=="adm_backup":
         if not is_admin(uid):
@@ -888,12 +997,52 @@ async def callback(update,ctx):
     if action=='search':
         ctx.user_data['step']='demo_search'
         return await send(update,'🔎 <b>PESQUISAR SERVIÇO</b>\n\nDigite o nome ou uma parte do nome do produto:',keyboard([[('❌ CANCELAR','home')]]))
-    if action in ('support','rent'):
-        key='menu_url_support' if action=='support' else 'menu_url_rent'
-        url=setting(key,'')
+    if action=='rent':
+        details=(
+            '🛠 <b>BOT DE VENDAS DE LOGIS | CONTAS PREMIUM</b> 🛠\n\n'
+            '<b>Versão:</b> Demonstração\n'
+            '<b>Dev:</b> @NexoStoreOf\n'
+            '<b>Linguagem:</b> Python\n\n'
+            '⚠ O DESENVOLVEDOR NÃO POSSUI RESPONSABILIDADE ALGUMA SOBRE ESTE BOT E NEM SOBRE O ADM DO MESMO, '
+            'CASO ENTRE EM CONTATO PARA RECLAMAR SOBRE MATERIAL OU PEDIR PARA CHAMAR O ADM DESTE BOT OU ALGO DO TIPO, '
+            'SERÁ BLOQUEADO DE IMEDIATO... APENAS O CHAME, CASO QUEIRA ALUGAR UM BOT.\n\n'
+            '⚠ O DESENVOLVEDOR NÃO POSSUI ACESSO AO BANCO DE DADOS, MENSAGENS, TRANSAÇÕES OU COMPRAS '
+            'E É RESPONSÁVEL SOMENTE PELA CRIAÇÃO OU DESENVOLVIMENTO DO BOT.\n\n'
+            '⚠️ VOCÊ QUE TEM QUE TER O MATERIAL PARA ABASTECER O BOT! SO ALUGAMOS O SISTEMA.'
+        )
+        return await send(update,details,M([
+            [B('📋 MAIS INFORMAÇÕES',callback_data='rent_info')],
+            [B('💬 CHAME AQUI',url='https://t.me/NexoStoreOf')],
+            [B('↩️ VOLTAR',callback_data='home')]
+        ]))
+    if action=='rent_info':
+        details=(
+            '📋 <b>O QUE O BOT DE LOJA OFERECE</b>\n\n'
+            '🛍 <b>Catálogo e produtos:</b> cadastrar, editar nome, preço, descrição e foto; '
+            'ativar/ocultar produtos, organizar o estoque por unidades e entregar acesso de teste automaticamente.\n\n'
+            '⚙️ <b>Painel administrativo:</b> gerenciar produtos, editar estoque, bloquear/desbloquear usuários, '
+            'adicionar/remover administradores, definir manutenção e personalizar mensagens, botões, links e imagens.\n\n'
+            '💰 <b>Saldo e bônus:</b> carteira de teste, bônus de indicações fictício, conversão em saldo, '
+            'bônus opcionais e limites configuráveis.\n\n'
+            '📊 <b>Relatórios:</b> histórico de compras, ranking administrativo de vendas e recargas, '
+            'avisos de reposição, lembretes e backups.\n\n'
+            '💳 <b>Pagamentos:</b> nesta demo o Pix está desativado. O código original possui '
+            'integração Mercado Pago, mas cada implantação comercial exige configuração e validação '
+            'individual; outros bancos não estão homologados.\n\n'
+            '🔐 <b>Segurança:</b> permissões de administrador e dados separados por instalação na versão demonstrativa. '
+            'Hospedagem multi-loja centralizada e licenciamento ainda em desenvolvimento.\n\n'
+            '⚠️ <b>Importante:</b> este bot é uma demonstração e não disponibiliza material ou contas premium. '
+            'O cliente precisa possuir autorização para vender seus produtos.'
+        )
+        return await send(update,details,M([
+            [B('💬 CHAME AQUI',url='https://t.me/NexoStoreOf')],
+            [B('↩️ VOLTAR',callback_data='rent')]
+        ]))
+    if action=='support':
+        url=setting('menu_url_support','')
         if url and re.fullmatch(r'https://[^\s]+',url):
-            return await send(update,('🧑🏻‍💻 SUPORTE' if action=='support' else '📍 ALUGAR BOT')+'\n\n'+html.escape(url),keyboard([[('🏠 VOLTAR','home')]]))
-        return await send(update,'💜 Esta opção ainda não tem um link configurado na demonstração.',keyboard([[('🏠 VOLTAR','home')]]))
+            return await send(update,'🧑🏻‍💻 SUPORTE\n\n'+html.escape(url),keyboard([[('🏠 VOLTAR','home')]]))
+        return await send(update,'💜 O contato de suporte ainda não foi configurado.',keyboard([[('🏠 VOLTAR','home')]]))
     if action=="balance":
         with conn() as c:r=c.execute("SELECT balance FROM users WHERE id=?",(uid,)).fetchone()
         return await send(update,f"💰 Saldo fictício: <b>{money(r['balance'])}</b>",keyboard([[('👤 PERFIL','account')],[('🏠 VOLTAR','home')]]))
@@ -1255,6 +1404,9 @@ async def message(update,ctx):
     value=(update.message.text or "").strip()
     step=ctx.user_data.get("step")
     if not await access_guard(update,ctx):return
+    if not is_admin(uid) and ctx.user_data.get('admin_preview_input'):
+        await demo_admin_input(update,ctx,value)
+        return
     if not step:return await send(update,"Use /start para abrir o menu.")
     if step=='coupon_code':
         pid=ctx.user_data.pop('coupon_pid',None);ctx.user_data.pop('step',None)
